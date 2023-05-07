@@ -48,16 +48,18 @@ class RswReader(object):
             if version >= Version(1, 6):
                 top, bottom, left, right = reader.read('4I')
             # unknown = reader.read('I')[0]
-            object_count = reader.read('I')[0]
-            for i in range(object_count):
-                object_type = reader.read('I')[0]
+            object_count = reader.read_s('I')
+            for _ in range(object_count):
+                object_type = reader.read_s('I')
                 if object_type == RSW_OBJECT_TYPE_MODEL:
                     model = Rsw.Model()
                     if version >= Version(1, 3):
-                        model.name = reader.read_fixed_length_null_terminated_string(40)
-                        model.animation_type = reader.read('I')[0]
-                        model.animation_speed = reader.read('f')[0]
-                        model.block_type = reader.read('I')[0]
+                        model.name = reader.read_fixed_length_null_terminated_string()
+                        model.animation_type = reader.read_s('I')
+                        model.animation_speed = reader.read_s('f')
+                        model.block_type = reader.read_s('I')
+                    if version >= Version(2, 6): # and build number > 161
+                        _ = reader.read('c') # unknown field        
                     model.filename = reader.read_fixed_length_null_terminated_string(80)
                     model.node_name = reader.read_fixed_length_null_terminated_string(80)
                     model.position = reader.read('3f')

@@ -9,11 +9,34 @@ class BinaryFileReader(object):
 
     def tell(self):
         return self.file.tell()
+    
+    def read_s(self, fmt):
+        size = struct.calcsize(fmt)
+        buffer = self.file.read(size)
+        return struct.unpack(fmt, buffer)[0]
 
     def read(self, fmt):
-        return struct.unpack(fmt, self.file.read(struct.calcsize(fmt)))
+        size = struct.calcsize(fmt)
+        buffer = self.file.read(size)
+        return struct.unpack(fmt, buffer)
+    
+    def read_str(self, encoding='euc-kr'):
+        length = self.read_s('I')
+        print(length)
+        if length <= 0:
+            return ''
+        return self.read_s(f'{length}c').decode(encoding)
+    
+    def read_x(self, x, encoding='euc-kr'):
+        buffer = self.file.read(x)
+        return struct.unpack('40s', buffer)[0].decode(encoding)
+    
+    def read_fixed_str(self, q, encoding='euc-kr'):
+        s = self.read_s(f'40s')
+        print(s)
+        return s.decode(encoding)
 
-    def read_fixed_length_null_terminated_string(self, n, encoding='euc-kr'):
+    def read_fixed_length_null_terminated_string(self, n=40, encoding='euc-kr'):
         buf = bytearray()
         for i in range(n):
             c = self.file.read(1)[0]

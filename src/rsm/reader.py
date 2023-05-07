@@ -1,72 +1,247 @@
-from ..io.reader import BinaryFileReader
-from .rsm import Rsm
-from pprint import pprint
+import os
+from collections import defaultdict
 
-class RsmReader(object):
-    def __init__(self):
-        pass
+import bpy
+import bmesh
+import mathutils
 
-    @staticmethod
-    def from_file(path) -> Rsm:
-        with open(path, 'rb') as f:
-            rsm = Rsm()
-            reader = BinaryFileReader(f)
-            magic = reader.read('4s')[0]
-            if magic != b'GRSM':
-                raise RuntimeError('Invalid file type')
-            version_major, version_minor = reader.read('2B')
-            rsm.anim_length = reader.read('I')
-            rsm.shade_type = reader.read('I')
-            if version_major > 1 or version_major and version_minor >= 4:
-                rsm.alpha = reader.read('B')
-            reader.read('16B')
-            texture_count = reader.read('I')[0]
-            for i in range(texture_count):
-                texture = reader.read_fixed_length_null_terminated_string(40)
-                rsm.textures.append(texture)
-            rsm.main_node = reader.read_fixed_length_null_terminated_string(40)
-            node_count = reader.read('I')[0]
-            for i in range(node_count):
-                node = rsm.Node()
-                node.name = reader.read_fixed_length_null_terminated_string(40)
-                node.parent_name = reader.read_fixed_length_null_terminated_string(40)
-                node_texture_count = reader.read('I')[0]
-                node.texture_indices = reader.read('{}I'.format(node_texture_count))
-                node.some_matrix = reader.read('9f') # offset matrix??
-                node.offset_ = reader.read('3f')
-                node.offset = reader.read('3f')
-                node.rotation = reader.read('4f')  # axis-angle
-                node.scale = reader.read('3f')
-                vertex_count = reader.read('I')[0]
-                node.vertices = [reader.read('3f') for _ in range(vertex_count)]
-                # Texture Coordinates
-                texcoord_count = reader.read('I')[0]
-                for _ in range(texcoord_count):
-                    texcoord = reader.read('I2f')
-                    node.texcoords.append(texcoord)
-                # Faces
-                face_count = reader.read('I')[0]
-                for _ in range(face_count):
-                    face = Rsm.Node.Face()
-                    face.vertex_indices = reader.read('3H')
-                    face.texcoord_indices = reader.read('3H')
-                    face.texture_index = reader.read('H')[0]
-                    reader.read('H') # padding
-                    face.two_sided = reader.read('I')[0]
-                    face.smoothing_group = reader.read('I')[0]
-                    node.faces.append(face)
-                rsm.nodes.append(node)
-                if version_major > 1 or (version_major == 1 and version_minor >= 5):
-                    location_keyframe_count = reader.read('I')[0]
-                    for _ in range(location_keyframe_count):
-                        location_keyframe = Rsm.Node.LocationKeyFrame()
-                        location_keyframe.frame = reader.read('I')
-                        location_keyframe.position = reader.read('3f')
-                        node.location_keyframes.append(location_keyframe)
-                rotation_keyframe_count = reader.read('I')[0]
-                for _ in range(rotation_keyframe_count):
-                    rotation_keyframe = Rsm.Node.RotationKeyFrame()
-                    rotation_keyframe.frame = reader.read('I')
-                    rotation_keyframe.rotation = reader.read('4f')
-                    node.rotation_keyframes.append(rotation_keyframe)
-            return rsm
+from ..utils import utils
+
+def createTexture(material):
+    bsdf = material.node_tree.nodes['Principled BSDF']
+    bsdf.inputs['Specular'].default_value = 0.0
+    texImage = material.node_tree.nodes.new('ShaderNodeTexImage')
+    material.node_tree.links.new(bsdf.inputs['Base Color'], texImage.outputs['Color'])
+    return texImage
+
+def loadTexture(texImage, texturePath):
+    try:
+        texImage.image = bpy.data.images.load(texturePath, check_existing=True)
+    except RuntimeError:
+        print(f"loading texture fails for {texturePath}!")
+
+def handleTexture(dataPath, texturePaths):
+    materials = []
+    for subTexturePath in texturePaths:
+        material = bpy.data.materials.new(subTexturePath)
+        material.specular_intensity = 0.0
+        material.use_nodes = True
+        materials.append(material)
+
+        texImage = createTexture(material)
+        loadTexture(texImage, os.path.join(dataPath, 'texture', subTexturePath))
+    return materials
+
+def buildSmoothGroup(bm, node, importSmoothGroups: bool):
+    smoothGroupFaces = defaultdict(lambda: [])
+    for faceIndex, face in enumerate(node.faces):
+        try:
+            bmface = bm.faces.new([bm.verts[x] for x in face.vertex_indices])
+            bmface.material_index = face.texture_index
+        except ValueError as e:
+            # TODO: we need more solid error handling here as a duplicate face throws off the UV assignment.
+            raise NotImplementedError
+        if importSmoothGroups:
+            bmface.smooth = True
+            for smoothGroup in face.smoothGroup:
+                smoothGroupFaces[smoothGroup].append(faceIndex)
+
+    bm.faces.ensure_lookup_table()
+    return smoothGroupFaces
+
+def assignTextureCoordinates(node, UVtexture):
+    for faceIndex, face in enumerate(node.faces):
+        uvs = [node.texcoords[x] for x in face.texcoord_indices]
+        for i, uv in enumerate(uvs):
+            # UVs have to be V-flipped (maybe)
+            uv = uv[0], 1.0 - uv[1]
+            UVtexture.data[faceIndex * 3 + i].uv = uv
+
+def applySmoothGroup(mesh, smoothGroupFaces):
+    for _, faceIndices in smoothGroupFaces.items():
+        '''
+        Select all faces in the smoothing group.
+        '''
+        bpy.ops.object.mode_set(mode='OBJECT')
+        for faceIndex in faceIndices:
+            mesh.polygons[faceIndex].select = True
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type='FACE')
+        '''
+        Mark boundary edges as sharp.
+        '''
+        bpy.ops.mesh.region_to_loop()
+        bpy.ops.mesh.mark_sharp()
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+def addEdgeSplitModifier(obj):
+    edge_split_modifier = obj.modifiers.new('EdgeSplit', type='EDGE_SPLIT')
+    edge_split_modifier.use_edge_angle = False
+    edge_split_modifier.use_edge_sharp = True
+
+def handleMesh(node, materials, importSmoothGroups: bool):
+    mesh = bpy.data.meshes.new(node.name)
+    mesh.uv_layers.new()
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+
+    for textureIndex in node.texture_indices:
+        mesh.materials.append(materials[textureIndex])
+
+    for vertex in node.vertices:
+        bm.verts.new(vertex)
+    bm.verts.ensure_lookup_table()
+
+    smoothGroupFaces = buildSmoothGroup(bm, node, importSmoothGroups)
+    bm.to_mesh(mesh)
+
+    offsetMatrix = mathutils.Matrix(node.offsetMatrix)
+    offset = offsetMatrix @ mathutils.Vector(node.offset)
+    TMatrix = mathutils.Matrix.Translation(offset)
+    mesh.transform(TMatrix)
+
+    assignTextureCoordinates(node, mesh.uv_layers[0])
+    return mesh, smoothGroupFaces
+
+def recenterByBoundBox(obj):
+    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
+    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
+    for ele in obj.bound_box:
+        print(mathutils.Vector(ele))
+    minZ = min([z for x, y, z in cornerCoordinates])
+ 
+    # obj.location -= mathutils.Vector((boundBoxCenter.x, boundBoxCenter.y, obj.location.z + minZ))
+    obj.location = mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
+    print(f"{boundBoxCenter=}")
+    print(f"{minZ=}")
+
+def printBound(obj):
+    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
+    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
+    for ele in obj.bound_box:
+        print(mathutils.Vector(ele))
+    minZ = min([z for x, y, z in cornerCoordinates])
+    print(f"{boundBoxCenter=}")
+    print(f"{minZ=}")
+
+def recenterByBoundBoxNew(obj):
+    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
+    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
+    minZ = min([z for x, y, z in cornerCoordinates])
+    obj.location = mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
+
+def calculateResetVector(obj):
+    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
+    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
+    minZ = min([z for x, y, z in cornerCoordinates])
+    return mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
+
+def recenterByBoundBoxNewLocal(obj, resetVec):
+    translationMatrix = mathutils.Matrix.Translation(resetVec)
+    obj.matrix_basis @= translationMatrix
+
+def applyMeshTransform(mesh, node):
+    offsetMatrix = mathutils.Matrix(node.offsetMatrix)
+
+    axisVec = offsetMatrix @ mathutils.Vector(node.rotation[1:])
+    rotationMatrix = mathutils.Matrix.Rotation(node.rotation[0], 4, axisVec)
+    rotationEuler = rotationMatrix.to_euler()
+
+    mesh.rotation_euler.rotate(rotationEuler)
+
+
+def applyTransform(obj, node):
+    offsetMatrix = mathutils.Matrix(node.offsetMatrix)
+
+    # rotation
+    axisVec = offsetMatrix @ mathutils.Vector(node.rotation[1:])
+    rotationMatrix = mathutils.Matrix.Rotation(node.rotation[0], 4, axisVec)
+    rotationEuler = rotationMatrix.to_euler()
+    obj.rotation_euler.rotate(rotationEuler)
+
+    # translation
+    position = offsetMatrix @ mathutils.Vector(node.position)
+    obj.location += position
+
+    # scale
+    scale = offsetMatrix @ mathutils.Vector(node.scale)
+    obj.scale.x *= scale.x
+    obj.scale.y *= scale.y
+    obj.scale.z *= -scale.z
+    return obj
+
+def create(rsmFile, filePath, options, collection = None):
+    fileName = os.path.basename(filePath)
+    dataPath = utils.get_data_path(filePath)
+
+    materials = handleTexture(dataPath, rsmFile.texturePaths)
+
+    # create collection
+    if options.createCollection:
+        collection = bpy.data.collections.new(fileName)
+        bpy.context.scene.collection.children.link(collection)
+        
+    elif collection == None:
+        collection = bpy.context.scene.collection
+
+    # create root obj
+    # rootObj = bpy.data.objects.new(fileName, None)
+    # collection.objects.link(rootObj)
+
+    objs = {}
+    for node in rsmFile.nodes:
+        mesh, smoothGroupFaces = handleMesh(node, materials, options.importSmoothGroups)
+
+        obj = bpy.data.objects.new(node.name, mesh)
+        collection.objects.link(obj)
+
+        bpy.ops.object.select_all(action='DESELECT')
+        if options.importSmoothGroups:
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+            applySmoothGroup(mesh, smoothGroupFaces)
+            addEdgeSplitModifier(obj)
+        bpy.ops.rigidbody.objects_add(type='PASSIVE')
+        bpy.ops.rigidbody.shape_change(type='MESH')
+        obj.select_set(True)
+
+        bpy.ops.object.select_all(action='DESELECT')
+
+        applyTransform(obj, node)
+        objs[node.name] = obj
+
+    for node in rsmFile.nodes:
+        if node.parent_name != "":
+            objs[node.name].parent = objs[node.parent_name]
+        else:
+            mainObj = objs[node.name]
+        # objs[node.name] = obj
+
+        # if node.parent_name == "":
+        #     obj.parent = rootObj
+
+    # # parent objects
+    # for node in rsmFile.nodes:
+    #     if node.parent_name == '':
+    #         continue
+
+    #     obj = objs[node.name]
+    #     obj.parent = objs[node.parent_name].parent
+    
+    # # apply parent transform to children
+    # for parent in rsmFile.nodes:
+    #     if parent.parent_name != "":
+    #         continue
+
+    #     # node is a parent node
+    #     for child in rsmFile.nodes:
+    #         if child.parent_name != parent.name:
+    #             continue
+
+    #         obj = objs[child.name]
+    #         applyTransform(obj, parent)
+
+    bpy.context.view_layer.update()
+    # return rootObj
+    return mainObj

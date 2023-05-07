@@ -1,7 +1,7 @@
 import pathlib
 import itertools
 from ..io.reader import BinaryFileReader
-from ..semver.version import Version
+from ..ver.version import Version
 
 def chunk(it, size):
     it = iter(it)

@@ -1,7 +1,7 @@
 from ..io.reader import BinaryFileReader
 import pathlib
 
-from ..semver.version import Version
+from ..ver.version import Version
 from enum import IntEnum
 
 class RswObjectType(IntEnum):

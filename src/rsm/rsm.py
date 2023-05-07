@@ -1,6 +1,6 @@
 import pathlib
 from ..io.reader import BinaryFileReader
-from ..semver.version import Version
+from ..ver.version import Version
 import math
 
 class ScaleKeyFrame(object):

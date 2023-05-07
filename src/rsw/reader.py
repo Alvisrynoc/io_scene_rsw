@@ -2,10 +2,10 @@ import os
 import bpy
 import mathutils
 import math
-from ..gnd.importer import GndImportOptions, GND_OT_ImportOperatorXXX
-from ..rsm.importer import RsmImportOptions, RSM_OT_ImportOperatorXXX
+from ..gnd.importer import Options as GndOptions, Importer as GndImporter
+from ..rsm.importer import Options as RsmOptions, Importer as RsmImporter
 
-from ..semver.version import Version
+from ..ver.version import Version
 from ..utils.utils import get_data_path
 
 NORMALIZING_FACTOR = 5
@@ -59,14 +59,14 @@ def duplciateObj(obj, collection=None):
     return newObj
 
 def handleGND(gnd_path, collection):
-    options = GndImportOptions(toCreateCollection=False)
-    gndObj, width, height = GND_OT_ImportOperatorXXX.import_gnd(gnd_path, options, collection)
+    options = GndOptions(toCreateCollection=False)
+    gndObj, width, height = GndImporter.import_gnd(gnd_path, options, collection)
     translation = mathutils.Vector((-width * NORMALIZING_FACTOR, -width * NORMALIZING_FACTOR, 0))
     # translationMatrix = mathutils.Matrix.Translation(translation)
     gndObj.location = translation
 
 def handleRSM(models_path, rswFile, collectionName):
-    rsm_options = RsmImportOptions(toCreateCollection=False)
+    rsm_options = RsmOptions(toCreateCollection=False)
 
     fileNameToObjsMap = dict()
     for rsw_model in rswFile.models:
@@ -86,7 +86,7 @@ def handleRSM(models_path, rswFile, collectionName):
         else:
             # Converts Windows filename separators to the OS's path separator
             rsm_path = os.path.join(models_path, filename)
-            modelObj = RSM_OT_ImportOperatorXXX.import_rsm(rsm_path, rsm_options, modelCollection)
+            modelObj = RsmImporter.import_rsm(rsm_path, rsm_options, modelCollection)
             fileNameToObjsMap[rsw_model.filename] = duplciateObj(modelObj)
 
         applyTransform(rsw_model, modelObj)

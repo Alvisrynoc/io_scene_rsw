@@ -5,12 +5,12 @@ from bpy.props import StringProperty, BoolProperty, FloatProperty
 from . import rsw
 from . import reader
 
-class RswImportOptions:
+class Options:
     def __init__(self, toImportGND: bool=True, toImportRSM: bool=True):
         self.toImportGND = toImportGND
         self.toImportRSM = toImportRSM
 
-class RSW_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
+class Importer(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs X"""
     bl_idname = 'io_scene_rsw.rsw_import'  # important since its how bpy.ops.import_test.some_data is constructed
     bl_label = 'Import Ragnarok Online RSWXXX'
@@ -36,7 +36,7 @@ class RSW_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHel
 
     def execute(self, context):
         rswFile = rsw.Rsw(self.filepath)
-        options = RswImportOptions()
+        options = Options()
         try:
             reader.create(rswFile, self.filepath, options)
         except FileNotFoundError as e:
@@ -53,4 +53,4 @@ class RSW_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHel
 
     @staticmethod
     def menu_func_import(self, context):
-        self.layout.operator(RSW_OT_ImportOperatorXXX.bl_idname, text='Ragnarok Online RSW (.rsw)')
+        self.layout.operator(Importer.bl_idname, text='Ragnarok Online RSW (.rsw)')

@@ -1,16 +1,14 @@
 import bpy
 import bpy_extras
-# import math
-from collections import defaultdict
-from mathutils import Vector, Matrix, Quaternion
 from bpy.props import StringProperty, BoolProperty, FloatProperty
+
 from . import rsm
 from . import reader
 
 class RsmImportOptions(object):
-    def __init__(self, importSmoothGroups: bool=True, createCollection: bool=True):
-        self.importSmoothGroups = importSmoothGroups
-        self.createCollection = createCollection
+    def __init__(self, toImportSmoothGroups: bool=True, toCreateCollection: bool=True):
+        self.toImportSmoothGroups = toImportSmoothGroups
+        self.toCreateCollection = toCreateCollection
 
 class RSM_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs X"""
@@ -27,23 +25,23 @@ class RSM_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHel
         maxlen=255,  # Max internal buffer length, longer would be clamped.
     )
 
-    importSmoothGroups: BoolProperty(
+    toImportSmoothGroups: BoolProperty(
         default=True
     )
-    createCollection: BoolProperty(
+    toCreateCollection: BoolProperty(
         default=False
     )
 
     @staticmethod
     def import_rsm(filePath, options, collection):
         rsmFile = rsm.Rsm(filePath)
-        mainNode = reader.create(rsmFile, filePath, options, collection=collection)
-        return mainNode, rsmFile.version
+        mainObj = reader.create(rsmFile, filePath, options, collection=collection)
+        return mainObj
 
     def execute(self, context):
         options = RsmImportOptions(
-            importSmoothGroups = self.importSmoothGroups,
-            createCollection = self.createCollection
+            toImportSmoothGroups = self.toImportSmoothGroups,
+            toCreateCollection = self.toCreateCollection
         )
         RSM_OT_ImportOperatorXXX.import_rsm(self.filepath, options, None)
         return {'FINISHED'}

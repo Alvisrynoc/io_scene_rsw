@@ -32,7 +32,7 @@ def handleTexture(dataPath, texturePaths):
         loadTexture(texImage, os.path.join(dataPath, 'texture', subTexturePath))
     return materials
 
-def buildSmoothGroup(bm, node, importSmoothGroups: bool):
+def buildSmoothGroup(bm, node, toImportSmoothGroups: bool):
     smoothGroupFaces = defaultdict(lambda: [])
     for faceIndex, face in enumerate(node.faces):
         try:
@@ -41,7 +41,7 @@ def buildSmoothGroup(bm, node, importSmoothGroups: bool):
         except ValueError as e:
             # TODO: we need more solid error handling here as a duplicate face throws off the UV assignment.
             raise NotImplementedError
-        if importSmoothGroups:
+        if toImportSmoothGroups:
             bmface.smooth = True
             for smoothGroup in face.smoothGroup:
                 smoothGroupFaces[smoothGroup].append(faceIndex)
@@ -79,7 +79,7 @@ def addEdgeSplitModifier(obj):
     edge_split_modifier.use_edge_angle = False
     edge_split_modifier.use_edge_sharp = True
 
-def handleMesh(node, materials, importSmoothGroups: bool):
+def handleMesh(node, materials, toImportSmoothGroups: bool):
     mesh = bpy.data.meshes.new(node.name)
     mesh.uv_layers.new()
 
@@ -93,7 +93,7 @@ def handleMesh(node, materials, importSmoothGroups: bool):
         bm.verts.new(vertex)
     bm.verts.ensure_lookup_table()
 
-    smoothGroupFaces = buildSmoothGroup(bm, node, importSmoothGroups)
+    smoothGroupFaces = buildSmoothGroup(bm, node, toImportSmoothGroups)
     bm.to_mesh(mesh)
 
     offsetMatrix = mathutils.Matrix(node.offsetMatrix)
@@ -103,53 +103,6 @@ def handleMesh(node, materials, importSmoothGroups: bool):
 
     assignTextureCoordinates(node, mesh.uv_layers[0])
     return mesh, smoothGroupFaces
-
-def recenterByBoundBox(obj):
-    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
-    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
-    for ele in obj.bound_box:
-        print(mathutils.Vector(ele))
-    minZ = min([z for x, y, z in cornerCoordinates])
- 
-    # obj.location -= mathutils.Vector((boundBoxCenter.x, boundBoxCenter.y, obj.location.z + minZ))
-    obj.location = mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
-    print(f"{boundBoxCenter=}")
-    print(f"{minZ=}")
-
-def printBound(obj):
-    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
-    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
-    for ele in obj.bound_box:
-        print(mathutils.Vector(ele))
-    minZ = min([z for x, y, z in cornerCoordinates])
-    print(f"{boundBoxCenter=}")
-    print(f"{minZ=}")
-
-def recenterByBoundBoxNew(obj):
-    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
-    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
-    minZ = min([z for x, y, z in cornerCoordinates])
-    obj.location = mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
-
-def calculateResetVector(obj):
-    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
-    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
-    minZ = min([z for x, y, z in cornerCoordinates])
-    return mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
-
-def recenterByBoundBoxNewLocal(obj, resetVec):
-    translationMatrix = mathutils.Matrix.Translation(resetVec)
-    obj.matrix_basis @= translationMatrix
-
-def applyMeshTransform(mesh, node):
-    offsetMatrix = mathutils.Matrix(node.offsetMatrix)
-
-    axisVec = offsetMatrix @ mathutils.Vector(node.rotation[1:])
-    rotationMatrix = mathutils.Matrix.Rotation(node.rotation[0], 4, axisVec)
-    rotationEuler = rotationMatrix.to_euler()
-
-    mesh.rotation_euler.rotate(rotationEuler)
-
 
 def applyTransform(obj, node):
     offsetMatrix = mathutils.Matrix(node.offsetMatrix)
@@ -178,7 +131,7 @@ def create(rsmFile, filePath, options, collection = None):
     materials = handleTexture(dataPath, rsmFile.texturePaths)
 
     # create collection
-    if options.createCollection:
+    if options.toCreateCollection:
         collection = bpy.data.collections.new(fileName)
         bpy.context.scene.collection.children.link(collection)
         
@@ -191,13 +144,13 @@ def create(rsmFile, filePath, options, collection = None):
 
     objs = {}
     for node in rsmFile.nodes:
-        mesh, smoothGroupFaces = handleMesh(node, materials, options.importSmoothGroups)
+        mesh, smoothGroupFaces = handleMesh(node, materials, options.toImportSmoothGroups)
 
         obj = bpy.data.objects.new(node.name, mesh)
         collection.objects.link(obj)
 
         bpy.ops.object.select_all(action='DESELECT')
-        if options.importSmoothGroups:
+        if options.toImportSmoothGroups:
             obj.select_set(True)
             bpy.context.view_layer.objects.active = obj
             applySmoothGroup(mesh, smoothGroupFaces)

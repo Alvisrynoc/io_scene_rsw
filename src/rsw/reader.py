@@ -1,102 +1,115 @@
-from ..io.reader import BinaryFileReader
-from .rsw import Rsw
+import os
+import bpy
+import mathutils
+import math
+from ..gnd.importer import GndImportOptions, GND_OT_ImportOperatorXXX
+from ..rsm.importer import RsmImportOptions, RSM_OT_ImportOperatorXXX
+
 from ..semver.version import Version
+from ..utils.utils import get_data_path
 
-RSW_OBJECT_TYPE_MODEL = 1
-RSW_OBJECT_TYPE_LIGHT = 2
-RSW_OBJECT_TYPE_SOUND = 3
-RSW_OBJECT_TYPE_EFFECT = 4
+NORMALIZING_FACTOR = 5
+
+offsetMatrix = mathutils.Matrix(((1, 0, 0), (0, 0, 1), (0, -1, 0)))
+
+def recenterbyBoundBox(obj):
+    cornerCoordinates = [mathutils.Vector(cornerCoordinate) for cornerCoordinate in obj.bound_box]
+    boundBoxCenter = sum(cornerCoordinates, mathutils.Vector()) / len(cornerCoordinates)
+    minZ = min([z for x, y, z in cornerCoordinates])
+    resetVec = mathutils.Vector((-boundBoxCenter.x, -boundBoxCenter.y, -minZ))
+
+    translationMatrix = mathutils.Matrix.Translation(resetVec)
+    obj.matrix_basis @= translationMatrix
+
+def applyTransform(rsw_model, modelObj):
+    # translation
+    pos = offsetMatrix @ mathutils.Vector(rsw_model.position)
+    modelObj.location = pos
+
+    # scale
+    scale = offsetMatrix @ mathutils.Vector(rsw_model.scale)
+    modelObj.scale.x *= scale.x
+    modelObj.scale.y *= scale.y
+    modelObj.scale.z *= -scale.z
+
+    # rotation
+    rotation = offsetMatrix @ mathutils.Vector([math.radians(deg) for deg in rsw_model.rotation])
+    rotationEuler = mathutils.Euler(rotation, 'XYZ')
+
+    modelObj.rotation_euler.rotate_axis("X", rotationEuler.x)
+    modelObj.rotation_euler.rotate_axis("Y", rotationEuler.y)
+    modelObj.rotation_euler.rotate_axis("Z", rotationEuler.z)
+
+    recenterbyBoundBox(modelObj)
+    bpy.context.view_layer.update()
+
+def duplicateObjUtil(obj, newObj, collection=None):
+    for childObj in obj.children:
+        newChildObj = childObj.copy()
+        newChildObj.parent = newObj
+        if collection:
+            collection.objects.link(newChildObj)
+            duplicateObjUtil(childObj, newChildObj, collection)
+
+def duplciateObj(obj, collection=None):
+    newObj = obj.copy()
+    if collection:
+        collection.objects.link(newObj)
+        duplicateObjUtil(obj, newObj, collection)
+    return newObj
+
+def handleGND(gnd_path, collection):
+    options = GndImportOptions(toCreateCollection=False)
+    gndObj, width, height = GND_OT_ImportOperatorXXX.import_gnd(gnd_path, options, collection)
+    translation = mathutils.Vector((-width * NORMALIZING_FACTOR, -width * NORMALIZING_FACTOR, 0))
+    # translationMatrix = mathutils.Matrix.Translation(translation)
+    gndObj.location = translation
+
+def handleRSM(models_path, rswFile, collectionName):
+    rsm_options = RsmImportOptions(toCreateCollection=False)
+
+    fileNameToObjsMap = dict()
+    for rsw_model in rswFile.models:
+        filename = rsw_model.filename.replace('\\', os.path.sep)
+
+        # if (filename.startswith("라헬\마을외벽04.rsm") or 
+        #     filename.startswith("사막도시\집정관") or 
+        #     filename.startswith("사막도시\민가")):
+            
+        modelCollection = bpy.data.collections.new(filename)
+        bpy.data.collections[collectionName].children.link(modelCollection)
+        # copy existing objects
+        if rsw_model.filename in fileNameToObjsMap:
+            bpy.ops.object.select_all(action='DESELECT')
+            obj = fileNameToObjsMap[rsw_model.filename]
+            modelObj = duplciateObj(obj, collection=modelCollection)
+        else:
+            # Converts Windows filename separators to the OS's path separator
+            rsm_path = os.path.join(models_path, filename)
+            modelObj = RSM_OT_ImportOperatorXXX.import_rsm(rsm_path, rsm_options, modelCollection)
+            fileNameToObjsMap[rsw_model.filename] = duplciateObj(modelObj)
+
+        applyTransform(rsw_model, modelObj)
 
 
-class RswReader(object):
-    def __init__(self):
-        pass
+def create(rswFile, filePath, options):
+    # Find the data path.
+    data_path = get_data_path(filePath)
 
-    @staticmethod
-    def from_file(path):
-        rsw = Rsw()
-        with open(path, 'rb') as f:
-            reader = BinaryFileReader(f)
-            magic = reader.read('4s')[0]
-            if magic != b'GRSW':
-                raise RuntimeError('Invalid file type.')
-            version = Version(*reader.read('2B'))
-            rsw.ini_file = reader.read_fixed_length_null_terminated_string(40)
-            rsw.gnd_file = reader.read_fixed_length_null_terminated_string(40)
-            if version >= Version(1, 4):
-                rsw.gat_file = reader.read_fixed_length_null_terminated_string(40)
-            rsw.src_file = reader.read_fixed_length_null_terminated_string(40)
-            # WATER
-            if version >= Version(1, 3):
-                rsw.water.height = reader.read('f')[0]
-            if version >= Version(1, 8):
-                rsw.water.type = reader.read('I')[0]
-                rsw.water.amplitude = reader.read('f')[0]
-                rsw.water.phase = reader.read('f')[0]
-                rsw.water.surface_curve_level = reader.read('f')[0]
-            if version >= Version(1, 9):
-                rsw.water.texture_cycling = reader.read('I')[0]
-            # LIGHT
-            if version >= Version(1, 5):
-                rsw.light.longitude, rsw.light.latitude = reader.read('2I')  # garbo? (45, 15)
+    # TODO: create an EMPTY object that is the RSW parent object
+    collectionName = os.path.basename(filePath)
 
-            rsw.light.diffuse = reader.read('3f')
-            rsw.light.ambient = reader.read('3f')
-            rsw.light.alpha = reader.read('f')[0]
+    collection = bpy.data.collections.new(collectionName)
+    bpy.context.scene.collection.children.link(collection)
 
-            # GROUND
-            if version >= Version(1, 6):
-                top, bottom, left, right = reader.read('4I')
-            # unknown = reader.read('I')[0]
-            object_count = reader.read_s('I')
-            for _ in range(object_count):
-                object_type = reader.read_s('I')
-                if object_type == RSW_OBJECT_TYPE_MODEL:
-                    model = Rsw.Model()
-                    if version >= Version(1, 3):
-                        model.name = reader.read_fixed_length_null_terminated_string()
-                        model.animation_type = reader.read_s('I')
-                        model.animation_speed = reader.read_s('f')
-                        model.block_type = reader.read_s('I')
-                    if version >= Version(2, 6): # and build number > 161
-                        _ = reader.read('c') # unknown field        
-                    model.filename = reader.read_fixed_length_null_terminated_string(80)
-                    model.node_name = reader.read_fixed_length_null_terminated_string(80)
-                    model.position = reader.read('3f')
-                    model.rotation = reader.read('3f')
-                    model.scale = reader.read('3f')
-                    rsw.models.append(model)
-                elif object_type == RSW_OBJECT_TYPE_LIGHT:
-                    light = Rsw.LightSource()
-                    light.name = reader.read_fixed_length_null_terminated_string(80)
-                    light.position = reader.read('3f')
-                    light.color = reader.read('3I')
-                    light.range = reader.read('f')[0]
-                    rsw.light_sources.append(light)
-                elif object_type == RSW_OBJECT_TYPE_SOUND:
-                    sound = Rsw.Sound()
-                    sound.name = reader.read_fixed_length_null_terminated_string(80)
-                    sound.file_name = reader.read_fixed_length_null_terminated_string(80)
-                    sound.position = reader.read('3f')
-                    sound.volume = reader.read('f')[0]
-                    sound.width = reader.read('I')[0]
-                    sound.height = reader.read('I')[0]
-                    sound.range = reader.read('I')[0]
-                    if version >= Version(2, 0):
-                        sound.cycle = reader.read('f')[0]
-                    rsw.sounds.append(sound)
-                elif object_type == RSW_OBJECT_TYPE_EFFECT:
-                    effect = Rsw.Effect()
-                    effect.name = reader.read_fixed_length_null_terminated_string(80)
-                    effect.position = reader.read('3f')
-                    effect.type = reader.read('I')[0]
-                    effect.emit_speed = reader.read('f')[0]
-                    effect.param = reader.read('4f')
-                    rsw.effects.append(effect)
-                else:
-                    raise RuntimeError('Invalid object type.')
-            # QUAD TREE
-            if version >= Version(2, 1):
-                # Not necessary for our purposes, so just ignore it.
-                pass
-        return rsw
+    # Load the GND file and import it into the scene.
+    if options.toImportGND:
+        gnd_path = os.path.join(data_path, rswFile.gnd_file)
+        handleGND(gnd_path, collection)
+
+    if options.toImportRSM:
+        # Load up all the RSM files and import them into the scene.
+        models_path = os.path.join(data_path, 'model')
+        handleRSM(models_path, rswFile, collectionName)
+        
+    bpy.context.view_layer.update()

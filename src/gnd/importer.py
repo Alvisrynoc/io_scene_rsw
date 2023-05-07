@@ -7,10 +7,10 @@ from . import reader
 from . import gnd
 
 class GndImportOptions(object):
-    def __init__(self, should_import_lightmaps: bool = True, createCollection:bool=True, lightmap_factor: float = 0.5):
-        self.should_import_lightmaps = should_import_lightmaps
+    def __init__(self, toImportLightmaps: bool = True, toCreateCollection:bool=True, lightmap_factor: float = 0.5):
+        self.toImportLightmaps = toImportLightmaps
         self.lightmap_factor = lightmap_factor
-        self.createCollection = createCollection
+        self.toCreateCollection = toCreateCollection
 
 
 class GND_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
@@ -51,9 +51,9 @@ class GND_OT_ImportOperatorXXX(bpy.types.Operator, bpy_extras.io_utils.ImportHel
 
     def execute(self, context):
         options = GndImportOptions(
-            should_import_lightmaps=self.should_import_lightmaps,
+            toImportLightmaps=self.toImportLightmaps,
             lightmap_factor=self.lightmap_factor,
-            createCollection=self.createCollection
+            toCreateCollection=self.toCreateCollection
         )
         GND_OT_ImportOperatorXXX.import_gnd(self.filepath, options, None)
         return {'FINISHED'}

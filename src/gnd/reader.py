@@ -24,7 +24,7 @@ def create(gndFile, filepath, options, collection):
     ''' Create materials. '''
     materials = createMaterials(gndFile, directory_name)
 
-        # if options.should_import_lightmaps:
+        # if options.toImportLightmaps:
         #     ''' Add light map texture slot to material.'''
         #     lightmap_texture_slot = material.texture_slots.add()
         #     lightmap_texture_slot.texture = lightmap_texture
@@ -39,10 +39,10 @@ def create(gndFile, filepath, options, collection):
         ''' Create UV map. '''
         mesh.materials.append(material)
         # material.texture_slots[0].uv_layer = uv_layer.name
-        # if options.should_import_lightmaps:
+        # if options.toImportLightmaps:
             # material.texture_slots[1].uv_layer = lightmap_uv_texture.name
 
-    if options.should_import_lightmaps:
+    if options.toImportLightmaps:
         lightmap_tiles_per_dimension = handleLightmap(gndFile)
     '''
     Assign texture coordinates.
@@ -51,7 +51,7 @@ def create(gndFile, filepath, options, collection):
 
     obj = bpy.data.objects.new(name, mesh)
 
-    if options.createCollection:
+    if options.toCreateCollection:
         collection = bpy.data.collections.new(name)
         bpy.context.scene.collection.children.link(collection)
     elif collection == None:
@@ -112,7 +112,7 @@ def assignTextureCoordinates(options, gndFile, mesh, lightmap_tiles_per_dimensio
             # UVs have to be V-flipped
             uv = uv[0], 1.0 - uv[1]
             uv_layer.data[FaceIndex * 4 + i].uv = uv
-        if options.should_import_lightmaps:
+        if options.toImportLightmaps:
             x1 = (face.lightmap_index % lightmap_tiles_per_dimension) / lightmap_tiles_per_dimension
             y1 = int(face.lightmap_index / lightmap_tiles_per_dimension) / lightmap_tiles_per_dimension
             x2 = x1 + (1.0 / lightmap_tiles_per_dimension)
